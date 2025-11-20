@@ -386,6 +386,44 @@ class ClipboardHistory:
         # Включаем возможность получения фокуса для canvas
         canvas.configure(takefocus=True)
         
+        # Добавляем поддержку прокрутки мышью и тачпадом
+        def on_mousewheel(event):
+            """Обработчик прокрутки колесиком мыши (Windows/Mac)"""
+            # Определяем направление прокрутки
+            # event.delta: положительное = прокрутка вверх, отрицательное = вниз
+            # Нормализуем delta (обычно 120 единиц = один шаг прокрутки)
+            if event.delta:
+                delta = -1 * (event.delta / 120)
+                # Прокручиваем canvas
+                canvas.yview_scroll(int(delta), "units")
+            return "break"
+        
+        def on_mousewheel_linux(event):
+            """Обработчик прокрутки для Linux (Button-4 и Button-5)"""
+            # Button-4 = прокрутка вверх, Button-5 = прокрутка вниз
+            if event.num == 4:
+                canvas.yview_scroll(-1, "units")
+            elif event.num == 5:
+                canvas.yview_scroll(1, "units")
+            return "break"
+        
+        # Привязываем события прокрутки к canvas
+        # MouseWheel работает на Windows и Mac
+        canvas.bind("<MouseWheel>", on_mousewheel)
+        # Button-4 и Button-5 работают на Linux
+        canvas.bind("<Button-4>", on_mousewheel_linux)
+        canvas.bind("<Button-5>", on_mousewheel_linux)
+        
+        # Также привязываем к scrollable_frame для прокрутки при наведении на элементы списка
+        scrollable_frame.bind("<MouseWheel>", on_mousewheel)
+        scrollable_frame.bind("<Button-4>", on_mousewheel_linux)
+        scrollable_frame.bind("<Button-5>", on_mousewheel_linux)
+        
+        # Привязываем к list_frame для прокрутки при наведении на область списка
+        list_frame.bind("<MouseWheel>", on_mousewheel)
+        list_frame.bind("<Button-4>", on_mousewheel_linux)
+        list_frame.bind("<Button-5>", on_mousewheel_linux)
+        
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
         
@@ -587,14 +625,96 @@ class ClipboardHistory:
             # Прокручиваем к выбранному элементу
             self.history_canvas.update_idletasks()
             try:
-                y = item['frame'].winfo_y()
+                frame = item['frame']
                 canvas_height = self.history_canvas.winfo_height()
-                if canvas_height > 0:
-                    # Вычисляем позицию для прокрутки
-                    scroll_y = max(0, min(1, (y - 50) / max(1, self.history_scrollable_frame.winfo_height() - canvas_height)))
-                    self.history_canvas.yview_moveto(scroll_y)
-            except:
-                pass
+                scrollable_height = self.history_scrollable_frame.winfo_height()
+                
+                if canvas_height > 0 and scrollable_height > canvas_height:
+                    # Получаем позицию элемента относительно scrollable_frame
+                    frame_y = frame.winfo_y()
+                    frame_height = frame.winfo_height()
+                    
+                    # Вычисляем текущую видимую область
+                    # Получаем текущую позицию прокрутки (0.0 - верх, 1.0 - низ)
+                    vbar = self.history_canvas.yview()
+                    scroll_top_px = vbar[0] * scrollable_height  # Верх видимой области в пикселях
+                    scroll_bottom_px = vbar[1] * scrollable_height  # Низ видимой области в пикселях
+                    
+                    # Координаты элемента относительно scrollable_frame
+                    element_top = frame_y
+                    element_bottom = frame_y + frame_height
+                    
+                    # Отступ для лучшей видимости
+                    margin = 5
+                    
+                    # Вычисляем прокручиваемую область (разница между общей высотой и видимой)
+                    scrollable_area = scrollable_height - canvas_height
+                    
+                    # Проверяем, виден ли элемент полностью
+                    needs_scroll = False
+                    new_scroll = None
+                    
+                    # Вычисляем отступ для видимости соседних элементов
+                    # Находим высоту предыдущего и следующего элементов для правильного отступа
+                    prev_element_height = 0
+                    next_element_height = 0
+                    
+                    # Высота предыдущего элемента (для прокрутки вверх)
+                    if index > 0:
+                        prev_item = self.history_items[index - 1]
+                        prev_element_height = prev_item['frame'].winfo_height()
+                    
+                    # Высота следующего элемента (для прокрутки вниз)
+                    if index < len(self.history_items) - 1:
+                        next_item = self.history_items[index + 1]
+                        next_element_height = next_item['frame'].winfo_height()
+                    
+                    # Если не удалось получить высоты соседних элементов, используем высоту текущего элемента
+                    if prev_element_height == 0:
+                        prev_element_height = frame_height
+                    if next_element_height == 0:
+                        next_element_height = frame_height
+                    
+                    if element_top < scroll_top_px + margin:
+                        # Элемент выше видимой области - прокручиваем вверх
+                        # Прокручиваем так, чтобы элемент был виден, а за ним был виден предыдущий элемент
+                        if scrollable_area > 0:
+                            # Вычисляем позицию так, чтобы элемент был виден, а сверху был виден предыдущий элемент
+                            # Отступ = высота предыдущего элемента + небольшой margin
+                            offset = prev_element_height + margin
+                            scroll_pixels = max(0, element_top - offset)
+                            new_scroll = scroll_pixels / scrollable_area
+                            needs_scroll = True
+                    elif element_bottom > scroll_bottom_px - margin:
+                        # Элемент ниже видимой области - прокручиваем вниз
+                        # Прокручиваем так, чтобы элемент был виден, а снизу был виден следующий элемент
+                        if scrollable_area > 0:
+                            # Вычисляем позицию так, чтобы элемент был виден, а снизу был виден следующий элемент
+                            # Отступ = высота следующего элемента + небольшой margin
+                            offset = next_element_height + margin
+                            scroll_pixels = element_bottom - canvas_height + offset
+                            new_scroll = scroll_pixels / scrollable_area
+                            needs_scroll = True
+                    
+                    if needs_scroll and new_scroll is not None:
+                        # Ограничиваем значение от 0.0 до 1.0
+                        new_scroll = max(0.0, min(1.0, new_scroll))
+                        self.history_canvas.yview_moveto(new_scroll)
+                        # Обновляем canvas для немедленного отображения изменений
+                        self.history_canvas.update_idletasks()
+            except Exception as e:
+                # Fallback: простая прокрутка по индексу
+                try:
+                    total_items = len(self.history_items)
+                    if total_items > 0:
+                        # Вычисляем примерную позицию элемента
+                        # Учитываем, что каждый элемент имеет примерно одинаковую высоту
+                        item_ratio = index / max(1, total_items - 1)
+                        # Применяем небольшую корректировку для центрирования
+                        scroll_pos = max(0.0, min(1.0, item_ratio * 0.9))
+                        self.history_canvas.yview_moveto(scroll_pos)
+                except:
+                    pass
         
         self.selected_index = index
     
